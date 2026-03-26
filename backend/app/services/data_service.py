@@ -65,23 +65,7 @@ def _summarize_matches(matches: list[Match]) -> dict:
     }
 
 
-def get_player_snapshot(player_name: str) -> dict | None:
-    with get_session() as session:
-        player = session.scalar(
-            select(Player).where(func.lower(Player.name) == player_name.strip().lower()).limit(1)
-        )
-
-        if not player:
-            return None
-
-        matches = list(
-            session.scalars(
-                select(Match)
-                .where(Match.player_id == player.id)
-                .order_by(Match.played_at.desc())
-            )
-        )
-
+def _build_snapshot(player: Player, matches: list[Match]) -> dict:
     return {
         "player": {
             "id": player.id,
@@ -93,41 +77,34 @@ def get_player_snapshot(player_name: str) -> dict | None:
     }
 
 
-def compare_players(player_names: list[str]) -> list[dict]:
-    normalized = [n.strip().lower() for n in player_names if n]
+def _get_player_snapshot_with_session(session: Session, player_name: str) -> dict | None:
+    player = session.scalar(
+        select(Player).where(func.lower(Player.name) == player_name.strip().lower()).limit(1)
+    )
 
+    if not player:
+        return None
+
+    matches = list(
+        session.scalars(
+            select(Match)
+            .where(Match.player_id == player.id)
+            .order_by(Match.played_at.desc())
+        )
+    )
+
+    return _build_snapshot(player, matches)
+
+
+def get_player_snapshot(player_name: str) -> dict | None:
     with get_session() as session:
-        players = list(
-            session.scalars(
-                select(Player).where(func.lower(Player.name).in_(normalized))
-            )
-        )
+        return _get_player_snapshot_with_session(session, player_name)
 
-        if not players:
-            return []
 
-        player_ids = [p.id for p in players]
-        all_matches = list(
-            session.scalars(
-                select(Match)
-                .where(Match.player_id.in_(player_ids))
-                .order_by(Match.played_at.desc())
-            )
-        )
-
-    matches_by_player: dict[int, list[Match]] = {p.id: [] for p in players}
-    for match in all_matches:
-        matches_by_player[match.player_id].append(match)
-
-    return [
-        {
-            "player": {
-                "id": player.id,
-                "name": player.name,
-                "ranking": player.ranking,
-                "country": player.country,
-            },
-            "stats": _summarize_matches(matches_by_player[player.id]),
-        }
-        for player in players
-    ]
+def compare_players(player_names: list[str]) -> list[dict]:
+    snapshots: list[dict] = []
+    for name in player_names:
+        snapshot = get_player_snapshot(name)
+        if snapshot:
+            snapshots.append(snapshot)
+    return snapshots
