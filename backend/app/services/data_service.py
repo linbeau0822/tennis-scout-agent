@@ -4,7 +4,7 @@ from collections import Counter
 from contextlib import contextmanager
 from typing import Iterator
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -71,7 +71,7 @@ def _summarize_matches(matches: list[Match]) -> dict:
 def get_player_snapshot(player_name: str) -> dict | None:
     with get_session() as session:
         player = session.scalar(
-            select(Player).where(Player.name.ilike(player_name.strip())).limit(1)
+            select(Player).where(func.lower(Player.name) == player_name.strip().lower()).limit(1)
         )
 
         if not player:
