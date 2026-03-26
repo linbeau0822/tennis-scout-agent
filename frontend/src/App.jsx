@@ -11,7 +11,7 @@ export default function App() {
   const [error, setError] = useState('')
 
   const onSearch = async () => {
-    if (!playerName.trim()) return
+    if (loading || !playerName.trim()) return
 
     setLoading(true)
     setError('')
