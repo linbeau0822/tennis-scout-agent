@@ -6,12 +6,11 @@ ROOT = Path(__file__).resolve().parents[1]
 BACKEND_ROOT = ROOT / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
-
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, delete
 from sqlalchemy.orm import Session
 
-from app.config import get_settings
-from app.models import Base, Match, Player
+from backend.app.config import get_settings
+from backend.app.models import Base, Match, Player
 
 settings = get_settings()
 engine = create_engine(settings.postgres_url, pool_pre_ping=True)
