@@ -153,7 +153,7 @@ React single-page app built with Vite and styled with Tailwind.
 ## Prerequisites
 
 - Node.js + npm
-- Python 3.9+
+- Python 3.10+
 - PostgreSQL running locally on port 5432
 
 ## Install dependencies
