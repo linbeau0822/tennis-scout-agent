@@ -12,7 +12,7 @@ router = APIRouter(tags=["players"])
 
 
 class CompareRequest(BaseModel):
-    player_names: list[str] = Field(default_factory=list, min_length=2)
+    player_names: list[str] = Field(default_factory=list, min_length=2, validate_default=True, description="List of player names to compare (at least 2).")
 
 
 @router.get("/player/{name}")
