@@ -7,7 +7,7 @@ export default function PlayerInput({ playerName, onPlayerNameChange, onSearch, 
         value={playerName}
         onChange={(e) => onPlayerNameChange(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') onSearch()
+          if (e.key === 'Enter' && !loading) onSearch()
         }}
       />
       <button
