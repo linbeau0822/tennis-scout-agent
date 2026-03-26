@@ -32,7 +32,7 @@ def get_compare_report(payload: CompareRequest) -> dict:
     snapshots = compare_players(payload.player_names)
 
     if len(snapshots) < 2:
-        found_players = {s["player"] for s in snapshots}
+        found_players = {s["player"]["name"] for s in snapshots}
         invalid_players = [name for name in payload.player_names if name not in found_players]
         raise HTTPException(
             status_code=422,
