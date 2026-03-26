@@ -42,7 +42,7 @@ def _summarize_matches(matches: list[Match]) -> dict:
     avg_ace = round(sum(m.ace_pct for m in matches) / len(matches), 2)
     avg_first_serve = round(sum(m.first_serve_win_pct for m in matches) / len(matches), 2)
 
-    recent = sorted(matches, key=lambda m: m.played_at, reverse=True)[:5]
+    recent = matches[:5]
     recent_form = [
         {
             "date": m.played_at.isoformat(),
