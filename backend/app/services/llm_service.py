@@ -56,9 +56,15 @@ def generate_report(prompt: str) -> str:
             "Set OPENAI_API_KEY in .env to enable real LLM scouting analysis."
         )
 
-    response = client.responses.create(
-        model=settings.openai_model,
-        input=prompt,
-        temperature=0.3,
-    )
-    return response.output_text.strip()
+    try:
+        response = client.responses.create(
+            model=settings.openai_model,
+            input=prompt,
+            temperature=0.3,
+        )
+        return response.output_text.strip()
+    except Exception:
+        return (
+            "There was an error while contacting the language model service. "
+            "Please try again later or check your OpenAI configuration."
+        )
