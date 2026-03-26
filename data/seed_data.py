@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, delete
 from sqlalchemy.orm import Session
 
 from backend.app.config import get_settings
@@ -20,8 +20,8 @@ def seed() -> None:
     Base.metadata.create_all(engine)
 
     with Session(engine) as session:
-        session.query(Match).delete()
-        session.query(Player).delete()
+        session.execute(delete(Match))
+        session.execute(delete(Player))
 
         players = [
             Player(name="Carlos Alcaraz", ranking=3, country="ESP"),
