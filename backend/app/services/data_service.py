@@ -4,19 +4,16 @@ from collections import Counter
 from contextlib import contextmanager
 from typing import Iterator
 
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.config import get_settings
+from app.db import SessionLocal
 from app.models import Match, Player
-
-settings = get_settings()
-engine = create_engine(settings.postgres_url, pool_pre_ping=True)
 
 
 @contextmanager
 def get_session() -> Iterator[Session]:
-    session = Session(engine)
+    session = SessionLocal()
     try:
         yield session
     finally:
