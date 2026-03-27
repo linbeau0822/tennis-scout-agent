@@ -18,14 +18,11 @@ class CompareRequest(BaseModel):
 @router.get("/player/{name}")
 def get_player_report(name: str) -> dict:
     snapshot = get_player_snapshot(name)
-    print(f"Snapshot for {name}: {snapshot}")
     if not snapshot:
         raise HTTPException(status_code=404, detail=f"Player not found: {name}")
 
     prompt = build_player_prompt(snapshot)
     report_result = generate_report(prompt)
-
-    print(f"Report result for {name}: {report_result}")
     return {**snapshot, **report_result}
 
 

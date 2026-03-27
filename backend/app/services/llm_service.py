@@ -79,7 +79,7 @@ def generate_report(prompt: str) -> ReportResult:
         }
 
     try:
-        print(f"Sending prompt to LLM: {prompt[:200]}...")  # Log the beginning of the prompt
+        print("Sending prompt to LLM...")  # Log the beginning of the prompt
         response = client.responses.create(
             model=settings.openai_model,
             input=prompt,
@@ -99,7 +99,7 @@ def generate_report(prompt: str) -> ReportResult:
                 },
             }
 
-        print(f"LLM response received: {report[:200]}...")  # Log the beginning of the response
+        print("LLM response received with status ", response.status)  # Log the beginning of the response
         return {
             "report": report,
             "llm": {
