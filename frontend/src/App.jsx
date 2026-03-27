@@ -51,7 +51,7 @@ export default function App() {
         {data && (
           <section className="mt-8 space-y-6">
             <StatsTable snapshot={data} />
-            <ReportDisplay report={data.report} />
+            <ReportDisplay report={data.report} llm={data.llm} />
           </section>
         )}
       </div>
