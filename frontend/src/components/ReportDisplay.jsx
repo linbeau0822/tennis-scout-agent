@@ -1,7 +1,7 @@
 import ReactMarkdown from 'react-markdown'
 
 export default function ReportDisplay({ report, llm }) {
-  const isUnavailable = report === 'LLM unavailable' || llm?.status === 'unavailable'
+  const isUnavailable = llm?.status === 'unavailable' || !llm
 
   return (
     <article className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
