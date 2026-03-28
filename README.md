@@ -6,6 +6,9 @@ Full-stack MVP for tennis scouting:
 - Database: PostgreSQL
 - AI: OpenAI API integration with local fallback text when key is missing
 
+## Sequence Diagram
+![Sequence Diagram](image.png)
+
 ## Project structure
 
 - frontend/ – React UI (`PlayerInput`, `StatsTable`, `ReportDisplay`)
