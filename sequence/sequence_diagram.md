@@ -7,8 +7,8 @@ sequenceDiagram
     participant StatsService
     participant LLM as "LLM (GPT-4o mini)"
 
-    User->>FE: Select Player A vs Player B
-    FE->>BE: POST /match-analysis (player_ids)
+    User->>Frontend (React): Select Player A vs Player B
+    Frontend (React)->>Backend (FastAPI): POST /compare (player_names)
 
     BE->>DBPG: Fetch player data
     DBPG-->>BE: Raw player + match data
