@@ -7,7 +7,7 @@ Full-stack MVP for tennis scouting:
 - AI: OpenAI API integration with local fallback text when key is missing
 
 ## Sequence Diagram
-![Sequence Diagram](image.png)
+![Sequence Diagram](sequence_diagram.png)
 
 ## Project structure
 

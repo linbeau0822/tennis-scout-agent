@@ -1,14 +1,14 @@
 ```mermaid
 sequenceDiagram
     participant User
-    participant FE as "Frontend (React)"
-    participant BE as "Backend (FastAPI)"
-    participant DBPG as "DB (PostgreSQL)"
+    participant FE as Frontend (React)
+    participant BE as Backend (FastAPI)
+    participant DBPG as DB (PostgreSQL)
     participant DataService
-    participant LLM as "LLM (gpt-4o-mini)"
+    participant LLM as LLM (gpt-4o-mini)
 
-    User->>Frontend (React): Select Player A vs Player B
-    Frontend (React)->>Backend (FastAPI): POST /compare (player_names)
+    User->>FE: Select Player A vs Player B
+    FE->>BE: POST /compare (player_names)
 
     BE->>DBPG: Fetch player data
     DBPG-->>BE: Raw player + match data
