@@ -46,21 +46,38 @@ def build_player_prompt(snapshot: dict) -> str:
 
 
 def build_compare_prompt(snapshots: list[dict]) -> str:
-    players = "\n".join(
-        [
-            (
-                f"- {s['player']['name']} (#{s['player']['ranking']}): "
-                f"win%={s['stats']['win_pct']}, surface={s['stats']['surface_breakdown']}"
-            )
-            for s in snapshots
-        ]
-    )
+    sections = []
+    for s in snapshots:
+        stats = s["stats"]
+        player = s["player"]
+        recent = stats.get("recent_form", [])
+        recent_str = ", ".join(
+            f"{r['result']} vs {r['opponent']} ({r['surface']})" for r in recent[:5]
+        ) or "N/A"
+        sections.append(
+            f"- {player['name']} (#{player['ranking']}, {player['country']}): "
+            f"win%={stats['win_pct']}, matches={stats['matches_played']}, "
+            f"surface={stats['surface_breakdown']}, "
+            f"ace%={stats['averages']['ace_pct']}, 1st_serve_win%={stats['averages']['first_serve_win_pct']}, "
+            f"recent form: {recent_str}"
+        )
+
+    players = "\n".join(sections)
 
     return (
-        "You are an elite tennis analyst. Compare the following players and provide tactical"
-        " recommendations.\n\n"
+        "You are an elite tennis analyst. Compare the following two players and provide a detailed"
+        " head-to-head analysis with a match prediction.\n\n"
         f"Players:\n{players}\n\n"
-        "Output sections: Best Overall Form, Surface Specialist, Tactical Notes."
+        "IMPORTANT: Your prediction should NOT blindly favor the historically better player. "
+        "Prioritize recent form, current physical condition/age, and surface context.\n\n"
+        "Output the following sections using markdown headings:\n"
+        "## Head-to-Head Summary\n"
+        "## Recent Form\n"
+        "## Strengths vs Weaknesses Matchup\n"
+        "## Surface Advantage\n"
+        "## Prediction\n"
+        "In the Prediction section, clearly state the predicted winner and explain why with a "
+        "confidence assessment."
     )
 
 

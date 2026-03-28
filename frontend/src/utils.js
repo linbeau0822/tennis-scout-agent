@@ -8,3 +8,8 @@ export async function fetchPlayerReport(playerName) {
   const { data } = await api.get(`/player/${encodeURIComponent(playerName)}`)
   return data
 }
+
+export async function comparePlayers(playerNames) {
+  const { data } = await api.post('/compare', { player_names: playerNames })
+  return data
+}
