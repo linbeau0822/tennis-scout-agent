@@ -22,9 +22,8 @@ def get_player_report(name: str) -> dict:
         raise HTTPException(status_code=404, detail=f"Player not found: {name}")
 
     prompt = build_player_prompt(snapshot)
-    report = generate_report(prompt)
-
-    return {**snapshot, "report": report}
+    report_result = generate_report(prompt)
+    return {**snapshot, **report_result}
 
 
 @router.post("/compare")
@@ -43,10 +42,10 @@ def get_compare_report(payload: CompareRequest) -> dict:
         )
 
     prompt = build_compare_prompt(snapshots)
-    report = generate_report(prompt)
+    report_result = generate_report(prompt)
 
     return {
         "players": [s["player"] for s in snapshots],
         "snapshots": snapshots,
-        "report": report,
+        **report_result,
     }

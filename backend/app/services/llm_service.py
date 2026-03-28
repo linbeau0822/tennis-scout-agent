@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal, TypedDict
+
 from openai import OpenAI
 
 from app.config import get_settings
@@ -7,9 +9,23 @@ from app.config import get_settings
 settings = get_settings()
 
 
+class LLMMetadata(TypedDict, total=False):
+    status: Literal["available", "unavailable"]
+    source: Literal["openai", "fallback"]
+    model: str
+    error: str
+
+
+class ReportResult(TypedDict):
+    report: str
+    llm: LLMMetadata
+
+
 def _client() -> OpenAI | None:
     if not settings.openai_api_key:
+        print("Warning: OPENAI_API_KEY is not set. LLM features will be unavailable.")
         return None
+    print("LLM client initialized with OpenAI.")
     return OpenAI(api_key=settings.openai_api_key)
 
 
@@ -48,23 +64,58 @@ def build_compare_prompt(snapshots: list[dict]) -> str:
     )
 
 
-def generate_report(prompt: str) -> str:
+def generate_report(prompt: str) -> ReportResult:
     client = _client()
     if client is None:
-        return (
-            "OPENAI_API_KEY is not set. This is a local fallback report. "
-            "Set OPENAI_API_KEY in .env to enable real LLM scouting analysis."
-        )
+        print("LLM client is unavailable. Returning fallback report.")
+        return {
+            "report": "LLM unavailable",
+            "llm": {
+                "status": "unavailable",
+                "source": "fallback",
+                "model": settings.openai_model,
+                "error": "OPENAI_API_KEY is not configured",
+            },
+        }
 
     try:
+        print("Sending prompt to LLM...")  # Log the beginning of the prompt
         response = client.responses.create(
             model=settings.openai_model,
             input=prompt,
             temperature=0.3,
         )
-        return response.output_text.strip()
-    except Exception:
-        return (
-            "There was an error while contacting the language model service. "
-            "Please try again later or check your OpenAI configuration."
-        )
+        report = response.output_text.strip()
+
+        if not report:
+            print("LLM returned empty output. Returning fallback report.")
+            return {
+                "report": "LLM unavailable",
+                "llm": {
+                    "status": "unavailable",
+                    "source": "fallback",
+                    "model": settings.openai_model,
+                    "error": "Language model returned empty output",
+                },
+            }
+
+        print("LLM response received with status ", response.status)  # Log the beginning of the response
+        return {
+            "report": report,
+            "llm": {
+                "status": "available",
+                "source": "openai",
+                "model": settings.openai_model,
+            },
+        }
+    except Exception as e:
+        print("Error during LLM request:", e)
+        return {
+            "report": "LLM unavailable",
+            "llm": {
+                "status": "unavailable",
+                "source": "fallback",
+                "model": settings.openai_model,
+                "error": "Language model request failed",
+            },
+        }
