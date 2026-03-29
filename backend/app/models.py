@@ -32,6 +32,13 @@ class Player(Base):
     first_name: Mapped[str] = mapped_column(String(60), nullable=False)
     last_name: Mapped[str] = mapped_column(String(60), nullable=False)
     full_name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    __table_args__ = (
+        Index(
+            "ix_players_full_name_lower",
+            func.lower(full_name),
+            unique=True,
+        ),
+    )
     country: Mapped[Optional[str]] = mapped_column(String(3), nullable=True)
     birthdate: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     height_cm: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
