@@ -44,9 +44,9 @@ def build_player_prompt(snapshot: dict) -> str:
         f"Matches: {stats['matches_played']} | Win%: {stats['win_pct']}",
         f"Surface breakdown: {stats['surface_breakdown']}",
         f"Recent form: {stats['recent_form']}",
-        f"Serve profile: ace%={stats['averages']['ace_pct']}, "
-        f"1st serve pct={stats['averages'].get('first_serve_pct', 'N/A')}, "
-        f"1st serve win%={stats['averages']['first_serve_win_pct']}",
+        f"Serve profile: aces/match={stats['averages'].get('aces_per_match') or 'N/A'}, "
+        f"1st serve pct={stats['averages'].get('first_serve_pct') or 'N/A'}, "
+        f"1st serve win%={stats['averages'].get('first_serve_win_pct') or 'N/A'}",
     ]
 
     if agg:
@@ -75,9 +75,9 @@ def build_compare_prompt(snapshots: list[dict]) -> str:
             f"- {player['name']} ({ranking_str}{player.get('country', 'N/A')}): "
             f"win%={stats['win_pct']}, matches={stats['matches_played']}, "
             f"surface={stats['surface_breakdown']}, "
-            f"ace%={stats['averages']['ace_pct']}, "
-            f"1st_serve_pct={stats['averages'].get('first_serve_pct', 'N/A')}, "
-            f"1st_serve_win%={stats['averages']['first_serve_win_pct']}, "
+            f"aces/match={stats['averages'].get('aces_per_match') or 'N/A'}, "
+            f"1st_serve_pct={stats['averages'].get('first_serve_pct') or 'N/A'}, "
+            f"1st_serve_win%={stats['averages'].get('first_serve_win_pct') or 'N/A'}, "
             f"recent form: {recent_str}"
         )
 

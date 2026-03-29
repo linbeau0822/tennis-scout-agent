@@ -16,7 +16,7 @@ export default function StatsTable({ snapshot }) {
         <Metric label="Wins" value={stats.wins} />
         <Metric label="Losses" value={stats.losses} />
         <Metric label="Win %" value={`${stats.win_pct}%`} />
-        <Metric label="Ace %" value={`${stats.averages.ace_pct}%`} />
+        <Metric label="Avg Aces" value={stats.averages.aces_per_match != null ? stats.averages.aces_per_match : 'N/A'} />
         <Metric
           label="1st Serve %"
           value={
@@ -25,7 +25,14 @@ export default function StatsTable({ snapshot }) {
               : 'N/A'
           }
         />
-        <Metric label="1st Serve Win %" value={`${stats.averages.first_serve_win_pct}%`} />
+        <Metric
+          label="1st Serve Win %"
+          value={
+            stats.averages.first_serve_win_pct != null
+              ? `${stats.averages.first_serve_win_pct}%`
+              : 'N/A'
+          }
+        />
       </div>
     </div>
   )

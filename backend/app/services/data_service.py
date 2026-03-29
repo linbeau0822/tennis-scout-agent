@@ -105,9 +105,9 @@ def _summarize_matches(matches: list[Match], player_id: int, per_match_stats: li
             "surface_breakdown": {},
             "recent_form": [],
             "averages": {
-                "ace_pct": 0.0,
-                "first_serve_pct": 0.0,
-                "first_serve_win_pct": 0.0,
+                "aces_per_match": None,
+                "first_serve_pct": None,
+                "first_serve_win_pct": None,
             },
         }
 
@@ -121,11 +121,11 @@ def _summarize_matches(matches: list[Match], player_id: int, per_match_stats: li
     if per_match_stats:
         avg_first_serve_pct = _safe_avg([s.first_serve_pct for s in per_match_stats])
         avg_first_serve_win = _safe_avg([s.first_serve_win_pct for s in per_match_stats])
-        avg_aces = _safe_avg([float(s.aces) if s.aces else None for s in per_match_stats])
+        avg_aces = _safe_avg([float(s.aces) if s.aces is not None else None for s in per_match_stats])
     else:
-        avg_first_serve_pct = 0.0
-        avg_first_serve_win = 0.0
-        avg_aces = 0.0
+        avg_first_serve_pct = None
+        avg_first_serve_win = None
+        avg_aces = None
 
     recent = matches[:5]
     recent_form = [
@@ -147,7 +147,7 @@ def _summarize_matches(matches: list[Match], player_id: int, per_match_stats: li
         "surface_breakdown": dict(surfaces),
         "recent_form": recent_form,
         "averages": {
-            "ace_pct": avg_aces,
+            "aces_per_match": avg_aces,
             "first_serve_pct": avg_first_serve_pct,
             "first_serve_win_pct": avg_first_serve_win,
         },

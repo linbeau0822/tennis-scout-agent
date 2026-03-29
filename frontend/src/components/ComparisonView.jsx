@@ -57,7 +57,7 @@ function StatsComparison({ snapshots }) {
     { label: 'Wins', valA: statsA.wins, valB: statsB.wins },
     { label: 'Losses', valA: statsA.losses, valB: statsB.losses },
     { label: 'Win %', valA: `${statsA.win_pct}%`, valB: `${statsB.win_pct}%`, numA: statsA.win_pct, numB: statsB.win_pct },
-    { label: 'Ace %', valA: `${statsA.averages.ace_pct}%`, valB: `${statsB.averages.ace_pct}%`, numA: statsA.averages.ace_pct, numB: statsB.averages.ace_pct },
+    { label: 'Avg Aces', valA: statsA.averages.aces_per_match != null ? statsA.averages.aces_per_match : 'N/A', valB: statsB.averages.aces_per_match != null ? statsB.averages.aces_per_match : 'N/A', numA: statsA.averages.aces_per_match, numB: statsB.averages.aces_per_match },
     {
       label: '1st Serve %',
       valA: statsA.averages.first_serve_pct == null ? 'N/A' : `${statsA.averages.first_serve_pct}%`,
@@ -65,7 +65,13 @@ function StatsComparison({ snapshots }) {
       numA: statsA.averages.first_serve_pct,
       numB: statsB.averages.first_serve_pct,
     },
-    { label: '1st Serve Win %', valA: `${statsA.averages.first_serve_win_pct}%`, valB: `${statsB.averages.first_serve_win_pct}%`, numA: statsA.averages.first_serve_win_pct, numB: statsB.averages.first_serve_win_pct },
+    {
+      label: '1st Serve Win %',
+      valA: statsA.averages.first_serve_win_pct == null ? 'N/A' : `${statsA.averages.first_serve_win_pct}%`,
+      valB: statsB.averages.first_serve_win_pct == null ? 'N/A' : `${statsB.averages.first_serve_win_pct}%`,
+      numA: statsA.averages.first_serve_win_pct,
+      numB: statsB.averages.first_serve_win_pct,
+    },
   ]
 
   // Surface breakdown
