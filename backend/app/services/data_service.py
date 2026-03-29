@@ -111,8 +111,10 @@ def _summarize_matches(matches: list[Match], player_id: int, per_match_stats: li
             },
         }
 
-    wins = sum(1 for m in matches if m.winner_id == player_id)
-    losses = len(matches) - wins
+    decided = [m for m in matches if m.winner_id is not None]
+    wins = sum(1 for m in decided if m.winner_id == player_id)
+    losses = len(decided) - wins
+    win_pct = round((wins / len(decided)) * 100, 2) if decided else 0.0
     surfaces = Counter(m.surface for m in matches if m.surface)
 
     # Compute averages from per-match stats if available
@@ -141,7 +143,7 @@ def _summarize_matches(matches: list[Match], player_id: int, per_match_stats: li
         "matches_played": len(matches),
         "wins": wins,
         "losses": losses,
-        "win_pct": round((wins / len(matches)) * 100, 2),
+        "win_pct": win_pct,
         "surface_breakdown": dict(surfaces),
         "recent_form": recent_form,
         "averages": {
