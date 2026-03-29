@@ -22,10 +22,12 @@ def get_session() -> Iterator[Session]:
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
-def _safe_avg(values: list[float | None]) -> float:
-    """Return the average of non-None values, or 0.0 if empty."""
+def _safe_avg(values: list[float | None]) -> float | None:
+    """Return the average of non-None values, or None if there are no such values."""
     clean = [v for v in values if v is not None]
-    return round(sum(clean) / len(clean), 2) if clean else 0.0
+    if not clean:
+        return None
+    return round(sum(clean) / len(clean), 2)
 
 
 def _get_matches_for_player(session: Session, player_id: int) -> list[Match]:
