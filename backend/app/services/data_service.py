@@ -83,14 +83,18 @@ def _get_aggregated_stats(session: Session, player_id: int) -> dict:
 
 
 def _get_per_match_stats(session: Session, player_id: int) -> list[PlayerStats]:
-    """Pull per-match stat rows for a player."""
-    return list(
-        session.scalars(
-            select(PlayerStats)
-            .where(PlayerStats.player_id == player_id, PlayerStats.match_id.is_not(None))
-            .order_by(PlayerStats.match_id.desc())
-        )
+    """Pull recent per-match stat rows for a player (bounded to avoid huge histories)."""
+    # Limit the number of per-match rows to avoid fetching an unbounded history
+    # for players with very long careers. Adjust this constant if the UI needs
+    # a different window of recent matches.
+    MAX_PER_MATCH_ROWS = 100
+    stmt = (
+        select(PlayerStats)
+        .where(PlayerStats.player_id == player_id, PlayerStats.match_id.is_not(None))
+        .order_by(PlayerStats.match_id.desc())
+        .limit(MAX_PER_MATCH_ROWS)
     )
+    return list(session.scalars(stmt))
 
 
 # ── Summarise from matches ──────────────────────────────────────────────────
