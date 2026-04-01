@@ -32,17 +32,33 @@ def _client() -> OpenAI | None:
 def build_player_prompt(snapshot: dict) -> str:
     player = snapshot["player"]
     stats = snapshot["stats"]
+    agg = snapshot.get("aggregated_stats", {})
 
-    return (
-        "You are an elite tennis analyst. Write a concise scouting report.\n\n"
-        f"Player: {player['name']} ({player['country']}), ranking #{player['ranking']}\n"
-        f"Matches: {stats['matches_played']} | Win%: {stats['win_pct']}\n"
-        f"Surface breakdown: {stats['surface_breakdown']}\n"
-        f"Recent form: {stats['recent_form']}\n"
-        f"Serve profile: ace%={stats['averages']['ace_pct']}, "
-        f"1st serve win%={stats['averages']['first_serve_win_pct']}\n\n"
-        "Output sections: Strengths, Weaknesses, Matchup Advice."
-    )
+    ranking_str = f", ranking #{player['ranking']}" if player.get("ranking") else ""
+    handedness_str = f", {player['handedness']}" if player.get("handedness") else ""
+    backhand_str = f" ({player['backhand_type']} backhand)" if player.get("backhand_type") else ""
+
+    lines = [
+        "You are an elite tennis analyst. Write a concise scouting report.\n",
+        f"Player: {player['name']} ({player.get('country', 'N/A')}){ranking_str}{handedness_str}{backhand_str}",
+        f"Matches: {stats['matches_played']} | Win%: {stats['win_pct']}",
+        f"Surface breakdown: {stats['surface_breakdown']}",
+        f"Recent form: {stats['recent_form']}",
+        f"Serve profile: aces/match={stats['averages'].get('aces_per_match') or 'N/A'}, "
+        f"1st serve pct={stats['averages'].get('first_serve_pct') or 'N/A'}, "
+        f"1st serve win%={stats['averages'].get('first_serve_win_pct') or 'N/A'}",
+    ]
+
+    if agg:
+        lines.append(
+            f"Career stats: break_pts_saved%={agg.get('break_points_saved_pct', 'N/A')}, "
+            f"break_pts_converted%={agg.get('break_points_converted_pct', 'N/A')}, "
+            f"return_pts_won%={agg.get('return_points_won_pct', 'N/A')}, "
+            f"service_games_won%={agg.get('service_games_won_pct', 'N/A')}"
+        )
+
+    lines.append("\nOutput sections: Strengths, Weaknesses, Matchup Advice.")
+    return "\n".join(lines)
 
 
 def build_compare_prompt(snapshots: list[dict]) -> str:
@@ -54,11 +70,14 @@ def build_compare_prompt(snapshots: list[dict]) -> str:
         recent_str = ", ".join(
             f"{r['result']} vs {r['opponent']} ({r['surface']})" for r in recent[:5]
         ) or "N/A"
+        ranking_str = f"#{player['ranking']}, " if player.get("ranking") else ""
         sections.append(
-            f"- {player['name']} (#{player['ranking']}, {player['country']}): "
+            f"- {player['name']} ({ranking_str}{player.get('country', 'N/A')}): "
             f"win%={stats['win_pct']}, matches={stats['matches_played']}, "
             f"surface={stats['surface_breakdown']}, "
-            f"ace%={stats['averages']['ace_pct']}, 1st_serve_win%={stats['averages']['first_serve_win_pct']}, "
+            f"aces/match={stats['averages'].get('aces_per_match') or 'N/A'}, "
+            f"1st_serve_pct={stats['averages'].get('first_serve_pct') or 'N/A'}, "
+            f"1st_serve_win%={stats['averages'].get('first_serve_win_pct') or 'N/A'}, "
             f"recent form: {recent_str}"
         )
 
