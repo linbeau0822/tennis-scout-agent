@@ -47,6 +47,7 @@ class Player(Base):
     backhand_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # One-Handed / Two-Handed
     pro_since: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     current_ranking: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    coach: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
 
     # Relationships
     matches_as_p1: Mapped[list["Match"]] = relationship(
