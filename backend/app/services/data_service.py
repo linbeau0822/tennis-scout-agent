@@ -211,6 +211,31 @@ def get_player_snapshot(player_name: str) -> dict | None:
         return _get_player_snapshot_with_session(session, player_name)
 
 
+def search_players(query: str, limit: int = 8) -> list[dict]:
+    q = query.strip()
+    if len(q) < 2:
+        return []
+    limit = max(1, min(limit, 20))
+    escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    pattern = f"%{escaped}%"
+    with get_session() as session:
+        rows = session.scalars(
+            select(Player)
+            .where(Player.full_name.ilike(pattern, escape="\\"))
+            .order_by(Player.current_ranking.asc().nulls_last(), Player.full_name.asc())
+            .limit(limit)
+        )
+        return [
+            {
+                "id": p.id,
+                "name": p.full_name,
+                "country": p.country,
+                "ranking": p.current_ranking,
+            }
+            for p in rows
+        ]
+
+
 def compare_players(player_names: list[str]) -> list[dict]:
     snapshots: list[dict] = []
     for name in player_names:

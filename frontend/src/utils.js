@@ -13,3 +13,8 @@ export async function comparePlayers(playerNames) {
   const { data } = await api.post('/compare', { player_names: playerNames })
   return data
 }
+
+export async function searchPlayers(q, limit = 8, { signal } = {}) {
+  const { data } = await api.get('/players/search', { params: { q, limit }, signal })
+  return data.results
+}
