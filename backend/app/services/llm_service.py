@@ -61,7 +61,7 @@ def build_player_prompt(snapshot: dict) -> str:
     return "\n".join(lines)
 
 
-def build_compare_prompt(snapshots: list[dict]) -> str:
+def build_compare_prompt(snapshots: list[dict], h2h: dict | None = None) -> str:
     sections = []
     for s in snapshots:
         stats = s["stats"]
@@ -82,13 +82,16 @@ def build_compare_prompt(snapshots: list[dict]) -> str:
         )
 
     players = "\n".join(sections)
+    h2h_block = _format_h2h_for_prompt(snapshots, h2h)
 
     return (
         "You are an elite tennis analyst. Compare the following two players and provide a detailed"
         " head-to-head analysis with a match prediction.\n\n"
         f"Players:\n{players}\n\n"
+        f"{h2h_block}\n"
         "IMPORTANT: Your prediction should NOT blindly favor the historically better player. "
-        "Prioritize recent form, current physical condition/age, and surface context.\n\n"
+        "Prioritize recent form, current physical condition/age, and surface context. "
+        "When you cite the head-to-head, use ONLY the numbers above — do not invent meetings.\n\n"
         "Output the following sections using markdown headings:\n"
         "## Head-to-Head Summary\n"
         "## Recent Form\n"
@@ -98,6 +101,54 @@ def build_compare_prompt(snapshots: list[dict]) -> str:
         "In the Prediction section, clearly state the predicted winner and explain why with a "
         "confidence assessment."
     )
+
+
+def _format_h2h_for_prompt(snapshots: list[dict], h2h: dict | None) -> str:
+    """Render the head-to-head record as a compact prompt block."""
+    if not h2h or len(snapshots) < 2:
+        return "Head-to-head record: not available.\n"
+
+    p1_name = snapshots[0]["player"]["name"]
+    p2_name = snapshots[1]["player"]["name"]
+    rec = h2h.get("record", {})
+    total = rec.get("total_meetings", 0)
+    p1_wins = rec.get("player1_wins", 0)
+    p2_wins = rec.get("player2_wins", 0)
+
+    if total == 0:
+        return f"Head-to-head record: no prior meetings between {p1_name} and {p2_name}.\n"
+
+    # Surface split
+    surface_lines = []
+    for surface, split in (h2h.get("surface_split") or {}).items():
+        surface_lines.append(
+            f"  - {surface}: {p1_name} {split['player1_wins']}-{split['player2_wins']} {p2_name}"
+            f" ({split['matches']} match{'es' if split['matches'] != 1 else ''})"
+        )
+
+    # Last 5 meetings
+    meeting_lines = []
+    for m in (h2h.get("meetings") or [])[:5]:
+        winner = m.get("winner_name") or ("Unknown" if m.get("winner_id") is None else "")
+        date_str = m.get("date") or "date unknown"
+        surface = m.get("surface") or "surface unknown"
+        score = m.get("score") or ""
+        tourn = m.get("tournament") or ""
+        meeting_lines.append(
+            f"  - {date_str} | {tourn} | {surface} | winner: {winner} | score: {score}"
+        )
+
+    parts = [
+        f"Head-to-head record: {p1_name} {p1_wins}-{p2_wins} {p2_name} "
+        f"({total} total meeting{'s' if total != 1 else ''}).",
+    ]
+    if surface_lines:
+        parts.append("Surface split:")
+        parts.extend(surface_lines)
+    if meeting_lines:
+        parts.append("Most recent meetings (newest first):")
+        parts.extend(meeting_lines)
+    return "\n".join(parts) + "\n"
 
 
 def generate_report(prompt: str) -> ReportResult:

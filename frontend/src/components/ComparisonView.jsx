@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 export default function ComparisonView({ data, onBack }) {
   if (!data) return null
 
-  const { players, snapshots, report, llm } = data
+  const { players, snapshots, h2h, report, llm } = data
   const isLLMUnavailable = llm?.status === 'unavailable' || !llm
 
   return (
@@ -34,11 +34,117 @@ export default function ComparisonView({ data, onBack }) {
         ))}
       </div>
 
+      {/* H2H */}
+      <H2HSection h2h={h2h} players={players} />
+
       {/* Stats Comparison */}
       <StatsComparison snapshots={snapshots} />
 
       {/* AI Analysis */}
       <AnalysisSection report={report} llm={llm} isUnavailable={isLLMUnavailable} />
+    </div>
+  )
+}
+
+/* ───────────── Head-to-Head ───────────── */
+
+function H2HSection({ h2h, players }) {
+  if (!h2h || !players || players.length < 2) return null
+
+  const [p1, p2] = players
+  const rec = h2h.record || {}
+  const total = rec.total_meetings ?? 0
+  const p1Wins = rec.player1_wins ?? 0
+  const p2Wins = rec.player2_wins ?? 0
+
+  let headline
+  if (total === 0) {
+    headline = 'No prior meetings'
+  } else if (p1Wins > p2Wins) {
+    headline = `${p1.name} leads ${p1Wins}–${p2Wins}`
+  } else if (p2Wins > p1Wins) {
+    headline = `${p2.name} leads ${p2Wins}–${p1Wins}`
+  } else {
+    headline = `Tied ${p1Wins}–${p2Wins}`
+  }
+
+  const surfaces = Object.entries(h2h.surface_split || {})
+  const meetings = h2h.meetings || []
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/60">
+      <div className="flex items-center justify-between border-b border-slate-800 p-4">
+        <h3 className="text-lg font-semibold">Head-to-Head</h3>
+        <span className="text-sm text-slate-300">
+          {headline}{total > 0 ? ` · ${total} meeting${total !== 1 ? 's' : ''}` : ''}
+        </span>
+      </div>
+
+      {total === 0 && (
+        <div className="p-4 text-sm text-slate-400">
+          These two players have no recorded meetings in the database.
+        </div>
+      )}
+
+      {total > 0 && surfaces.length > 0 && (
+        <div className="border-b border-slate-800/60 p-4">
+          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+            Surface Split
+          </h4>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-slate-400">
+                <th className="px-3 py-1.5 text-left font-medium">{p1.name}</th>
+                <th className="px-3 py-1.5 text-center font-medium">Surface</th>
+                <th className="px-3 py-1.5 text-right font-medium">{p2.name}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {surfaces.map(([surface, split]) => (
+                <tr key={surface} className="border-t border-slate-800/60">
+                  <td className={`px-3 py-1.5 text-left font-semibold ${split.player1_wins > split.player2_wins ? 'text-emerald-400' : ''}`}>
+                    {split.player1_wins}
+                  </td>
+                  <td className="px-3 py-1.5 text-center capitalize text-slate-400">{surface}</td>
+                  <td className={`px-3 py-1.5 text-right font-semibold ${split.player2_wins > split.player1_wins ? 'text-emerald-400' : ''}`}>
+                    {split.player2_wins}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {meetings.length > 0 && (
+        <div className="overflow-x-auto p-4">
+          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+            Recent Meetings
+          </h4>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-slate-400">
+                <th className="px-3 py-1.5 text-left font-medium">Date</th>
+                <th className="px-3 py-1.5 text-left font-medium">Tournament</th>
+                <th className="px-3 py-1.5 text-left font-medium">Surface</th>
+                <th className="px-3 py-1.5 text-left font-medium">Winner</th>
+                <th className="px-3 py-1.5 text-left font-medium">Score</th>
+              </tr>
+            </thead>
+            <tbody>
+              {meetings.map((m) => (
+                <tr key={m.match_id} className="border-t border-slate-800/60">
+                  <td className="px-3 py-1.5 text-slate-300">{m.date || '—'}</td>
+                  <td className="px-3 py-1.5 text-slate-300">{m.tournament || '—'}</td>
+                  <td className="px-3 py-1.5 text-slate-300 capitalize">{m.surface || '—'}</td>
+                  <td className="px-3 py-1.5 font-semibold text-slate-100">{m.winner_name || '—'}</td>
+                  <td className="px-3 py-1.5 text-slate-300">{m.score || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
