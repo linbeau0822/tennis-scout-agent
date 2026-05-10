@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app.services.data_service import compare_players, get_player_snapshot
+from app.services.data_service import compare_players_with_h2h, get_player_snapshot
 from app.services.llm_service import (
     build_compare_prompt,
     build_player_prompt,
@@ -28,7 +28,9 @@ def get_player_report(name: str) -> dict:
 
 @router.post("/compare")
 def get_compare_report(payload: CompareRequest) -> dict:
-    snapshots = compare_players(payload.player_names)
+    result = compare_players_with_h2h(payload.player_names)
+    snapshots = result["snapshots"]
+    h2h = result["h2h"]
 
     if len(snapshots) < 2:
         found_players = {s["player"]["name"] for s in snapshots}
@@ -41,11 +43,12 @@ def get_compare_report(payload: CompareRequest) -> dict:
             },
         )
 
-    prompt = build_compare_prompt(snapshots)
+    prompt = build_compare_prompt(snapshots, h2h)
     report_result = generate_report(prompt)
 
     return {
         "players": [s["player"] for s in snapshots],
         "snapshots": snapshots,
+        "h2h": h2h,
         **report_result,
     }

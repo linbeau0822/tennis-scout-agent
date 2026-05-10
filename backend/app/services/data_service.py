@@ -4,7 +4,7 @@ from collections import Counter
 from contextlib import contextmanager
 from typing import Iterator
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
@@ -218,3 +218,125 @@ def compare_players(player_names: list[str]) -> list[dict]:
         if snapshot:
             snapshots.append(snapshot)
     return snapshots
+
+
+# ── Head-to-Head ────────────────────────────────────────────────────────────
+
+MAX_H2H_MEETINGS = 10
+
+
+def compute_h2h(session: Session, p1_id: int, p2_id: int) -> dict:
+    """
+    Compute the head-to-head record between two players from the matches table.
+
+    Returns:
+        {
+          "player1_id": int,
+          "player2_id": int,
+          "record": {"player1_wins": int, "player2_wins": int,
+                     "total_meetings": int, "decided": int},
+          "surface_split": {
+            "<surface>": {"player1_wins": int, "player2_wins": int, "matches": int}
+          },
+          "meetings": [
+            {"match_id": int, "date": str|None, "tournament": str|None,
+             "round": str|None, "surface": str|None,
+             "winner_id": int|None, "winner_name": str|None,
+             "score": str|None}
+          ]
+        }
+    """
+    matches = list(
+        session.scalars(
+            select(Match)
+            .where(
+                or_(
+                    and_(Match.player1_id == p1_id, Match.player2_id == p2_id),
+                    and_(Match.player1_id == p2_id, Match.player2_id == p1_id),
+                )
+            )
+            .order_by(Match.date.desc().nulls_last(), Match.id.desc())
+        )
+    )
+
+    p1_wins = 0
+    p2_wins = 0
+    decided = 0
+    surface_split: dict[str, dict[str, int]] = {}
+    meetings: list[dict] = []
+
+    for m in matches:
+        if m.winner_id is not None:
+            decided += 1
+            if m.winner_id == p1_id:
+                p1_wins += 1
+            elif m.winner_id == p2_id:
+                p2_wins += 1
+
+        if m.surface:
+            bucket = surface_split.setdefault(
+                m.surface,
+                {"player1_wins": 0, "player2_wins": 0, "matches": 0},
+            )
+            bucket["matches"] += 1
+            if m.winner_id == p1_id:
+                bucket["player1_wins"] += 1
+            elif m.winner_id == p2_id:
+                bucket["player2_wins"] += 1
+
+        if len(meetings) < MAX_H2H_MEETINGS:
+            winner_name: str | None = None
+            if m.winner_id is not None:
+                if m.player1 and m.winner_id == m.player1_id:
+                    winner_name = m.player1.full_name
+                elif m.player2 and m.winner_id == m.player2_id:
+                    winner_name = m.player2.full_name
+            meetings.append({
+                "match_id": m.id,
+                "date": m.date.isoformat() if m.date else None,
+                "tournament": m.tournament.name if m.tournament else None,
+                "round": m.round,
+                "surface": m.surface,
+                "winner_id": m.winner_id,
+                "winner_name": winner_name,
+                "score": m.score,
+            })
+
+    return {
+        "player1_id": p1_id,
+        "player2_id": p2_id,
+        "record": {
+            "player1_wins": p1_wins,
+            "player2_wins": p2_wins,
+            "total_meetings": len(matches),
+            "decided": decided,
+        },
+        "surface_split": surface_split,
+        "meetings": meetings,
+    }
+
+
+def compare_players_with_h2h(player_names: list[str]) -> dict:
+    """
+    Build snapshots for the requested players and, when exactly two valid
+    players are resolved, also compute their head-to-head record.
+
+    Returns:
+        {"snapshots": [...], "h2h": dict | None}
+    """
+    with get_session() as session:
+        snapshots: list[dict] = []
+        for name in player_names:
+            snap = _get_player_snapshot_with_session(session, name)
+            if snap:
+                snapshots.append(snap)
+
+        h2h: dict | None = None
+        if len(snapshots) == 2:
+            h2h = compute_h2h(
+                session,
+                snapshots[0]["player"]["id"],
+                snapshots[1]["player"]["id"],
+            )
+
+        return {"snapshots": snapshots, "h2h": h2h}

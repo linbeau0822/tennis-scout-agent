@@ -5,8 +5,10 @@ Bootstrap utilities for the tennis_scout database.
   seed_players()  – insert/upsert ATP ranking players (idempotent, safe to
                     re-run; does NOT reset schema)
   fetch_and_populate_coach_data() – fetch coach info from ATP API and populate
-                    the coach column for all players (safe to re-run)
-"""
+                    the coach column for all players (safe to re-run)  seed_matches()  – fetch 500 most recent matches per player from ATP API
+                    and populate matches + tournaments tables (idempotent)"""
+
+from __future__ import annotations
 
 from pathlib import Path
 import sys
@@ -19,7 +21,13 @@ from sqlalchemy import create_engine, text
 
 from app.config import get_settings
 from app.models import Base
-from app.services.atp_api_service import fetch_player_profile, extract_player_data_from_profile
+from app.services.atp_api_service import (
+    fetch_atp_rankings,
+    fetch_player_matches,
+    fetch_player_profile,
+    fetch_tournament_info,
+    extract_player_data_from_profile,
+)
 
 settings = get_settings()
 engine = create_engine(settings.postgres_url, pool_pre_ping=True)
@@ -177,17 +185,676 @@ def seed_players() -> None:
         print("Sequence players_id_seq advanced past max explicit id.")
 
 
-if __name__ == "__main__":
-    seed_players()
+def sync_top200_rankings(top_n: int = 200) -> None:
+    """
+    Fetch the live top-N ATP rankings and upsert them into the players table.
+
+    For new player IDs: insert a full row (id, names, full_name, country, rank).
+    For existing IDs: only refresh `current_ranking` (don't overwrite the
+    curated names/country we already have).
+
+    Players currently ranked outside the top-N keep their old `current_ranking`
+    value (we do NOT clear ranks for missing players — that would invalidate
+    the existing 101 seed). If you want a clean refresh, call reset_schema()
+    first.
+
+    Idempotent — safe to re-run.
+    """
+    print(f"Fetching top {top_n} ATP rankings from API...")
+    rankings = fetch_atp_rankings(top_n=top_n, debug_log_first_response=True)
+
+    if not rankings:
+        print("✗ No ranking entries returned from API. Aborting.")
+        return
+
+    print(f"✓ Got {len(rankings)} ranking entries from API.")
+
+    # Insert new players: full row, ON CONFLICT DO NOTHING
+    insert_sql = text("""
+        INSERT INTO players (
+            id, first_name, last_name, full_name, country, current_ranking,
+            birthdate, height_cm, weight_kg, handedness, backhand_type, pro_since
+        ) VALUES (
+            :id, :first_name, :last_name, :full_name, :country, :current_ranking,
+            NULL, NULL, NULL, NULL, NULL, NULL
+        )
+        ON CONFLICT (id) DO NOTHING
+    """)
+
+    # Update ranking for already-existing rows (run separately so we don't
+    # clobber curated names/country).
+    update_rank_sql = text("""
+        UPDATE players SET current_ranking = :current_ranking WHERE id = :id
+    """)
+
+    advance_seq_sql = text("""
+        SELECT setval(
+            'players_id_seq',
+            GREATEST((SELECT MAX(id) FROM players), nextval('players_id_seq') - 1) + 1
+        )
+    """)
+
+    rows = []
+    for r in rankings:
+        # Defensive: make sure full_name is unique-ish; the players table has
+        # a UNIQUE constraint on full_name. Append id only if name collides.
+        full_name = r["full_name"] or f"{r['first_name']} {r['last_name']}".strip()
+        if not full_name:
+            full_name = f"Player {r['player_id']}"
+        rows.append({
+            "id": r["player_id"],
+            "first_name": r["first_name"] or "",
+            "last_name": r["last_name"] or "",
+            "full_name": full_name,
+            "country": r["country"],
+            "current_ranking": r["rank"],
+        })
+
+    # Resolve full_name collisions against existing DB rows that have a
+    # different id (UNIQUE constraint will reject otherwise).
+    with engine.begin() as conn:
+        existing = {
+            row[1].lower(): row[0]
+            for row in conn.execute(text("SELECT id, full_name FROM players")).fetchall()
+        }
+        # Drop any new entries whose full_name collides with a different id —
+        # they're almost certainly the same person under a slight name variant
+        # already in the DB; we just refresh the existing row's rank.
+        deduped = []
+        for row in rows:
+            key = row["full_name"].lower()
+            existing_id = existing.get(key)
+            if existing_id is not None and existing_id != row["id"]:
+                # Same name, different id → assume it's the same player; just
+                # update the existing id's ranking.
+                conn.execute(update_rank_sql, {
+                    "id": existing_id,
+                    "current_ranking": row["current_ranking"],
+                })
+                continue
+            deduped.append(row)
+
+        # Now insert (skips on id-conflict)
+        result = conn.execute(insert_sql, deduped)
+        inserted = result.rowcount
+        # Update rankings for all top-N entries (including just-inserted ones —
+        # cheap and ensures rank is current for everyone).
+        conn.execute(update_rank_sql, deduped)
+        conn.execute(advance_seq_sql)
+
+    print(f"✓ Inserted {inserted} new player(s); refreshed ranking for {len(deduped)} entries.")
 
 
-def fetch_and_populate_coach_data() -> None:
+# ---------------------------------------------------------------------------
+# Round ID → human-readable round name mapping (from ATP API)
+# ---------------------------------------------------------------------------
+ROUND_MAP = {
+    4: "R128",
+    5: "R64",
+    6: "R32",
+    7: "R16",
+    9: "Quarters",
+    10: "Semis",
+    12: "Finals",
+}
+
+
+def _extract_match_surface(m: dict) -> str | None:
+    """Best-effort surface extraction from a past-matches response entry."""
+    # Try direct keys first
+    for key in ("surface", "court", "courtType", "surfaceType", "groundType"):
+        v = m.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+        if isinstance(v, dict):
+            name = v.get("name") or v.get("type")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+    # Try nested under tournament
+    t = m.get("tournament") if isinstance(m.get("tournament"), dict) else {}
+    for key in ("surface", "court", "surfaceType"):
+        v = t.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
+
+
+# Field name candidates for per-player per-match stats. We probe each match
+# dict for these and, if any are found, write a PlayerStats row. The mapping
+# is intentionally permissive — the actual API may use different keys, in
+# which case nothing will be written and we fall back to career stats.
+_PER_MATCH_STAT_KEYS_PLAYER1 = {
+    "aces": ["player1Aces", "p1Aces", "aces1", "acesPlayer1"],
+    "double_faults": ["player1DoubleFaults", "p1DoubleFaults", "doubleFaults1"],
+    "first_serve_pct": ["player1FirstServePercentage", "p1FirstServePercentage", "firstServePercentage1"],
+    "first_serve_win_pct": ["player1FirstServeWonPercentage", "p1FirstServeWonPercentage", "winningOnFirstServePercentage1"],
+    "second_serve_win_pct": ["player1SecondServeWonPercentage", "p1SecondServeWonPercentage", "winningOnSecondServePercentage1"],
+    "break_points_saved_pct": ["player1BreakPointsSavedPercentage", "p1BreakPointsSavedPercentage"],
+    "break_points_converted_pct": ["player1BreakPointsConvertedPercentage", "p1BreakPointsConvertedPercentage"],
+    "service_games_won_pct": ["player1ServiceGamesWonPercentage", "p1ServiceGamesWonPercentage"],
+    "return_games_won_pct": ["player1ReturnGamesWonPercentage", "p1ReturnGamesWonPercentage"],
+    "return_points_won_pct": ["player1ReturnPointsWonPercentage", "p1ReturnPointsWonPercentage"],
+    "tiebreaks_won_pct": ["player1TiebreaksWonPercentage", "p1TiebreaksWonPercentage"],
+}
+
+_PER_MATCH_STAT_KEYS_PLAYER2 = {
+    col: [k.replace("player1", "player2").replace("p1", "p2").replace("1", "2") for k in keys]
+    for col, keys in _PER_MATCH_STAT_KEYS_PLAYER1.items()
+}
+
+
+def _coerce_number(v):
+    """Best-effort numeric coercion; returns None if not coercible."""
+    if v is None or v == "":
+        return None
+    if isinstance(v, (int, float)):
+        return v
+    try:
+        s = str(v).strip().rstrip("%")
+        if "." in s:
+            return float(s)
+        return int(s)
+    except (ValueError, TypeError):
+        return None
+
+
+def _extract_per_match_stats(m: dict, player_field_map: dict) -> dict | None:
+    """
+    Extract per-match stats for a single player from a match dict, using a
+    column→candidate-keys map. Returns None if nothing found.
+    """
+    out: dict = {}
+    for col, candidates in player_field_map.items():
+        for k in candidates:
+            if k in m and m[k] not in (None, ""):
+                v = _coerce_number(m[k])
+                if v is not None:
+                    out[col] = v
+                    break
+    return out or None
+
+
+def seed_matches() -> None:
+    """
+    Fetch the 500 most recent matches for every player in the players table
+    via the ATP API and populate the matches (and tournaments) tables.
+
+    Workflow:
+      1. Read all player IDs from the players table.
+      2. For each player, call the past-matches API endpoint.
+      3. Deduplicate matches globally (two seeded players may share a match).
+      4. Insert any unknown opponents into the players table (minimal rows).
+      5. Insert any unknown tournament IDs into the tournaments table.
+      6. Bulk-insert all unique matches (with surface).
+      7. Opportunistically write per-match player_stats rows if the API
+         response carries per-match stat fields.
+
+    Fully idempotent — UPSERT on conflict for surface so re-runs backfill it.
+    """
+    from datetime import date as date_type
+
+    # -- 1. Load only seeded players (those with a ranking) from the DB --------
+    print("Fetching all players from database...")
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT id, full_name FROM players "
+                "WHERE current_ranking IS NOT NULL "
+                "ORDER BY current_ranking"
+            )
+        )
+        players = rows.fetchall()
+
+    total_players = len(players)
+    print(f"Found {total_players} players to process.")
+    print("Starting to fetch match history from ATP API (1.5s delay between requests)...\n")
+
+    # -- 2. Fetch matches per player & deduplicate ----------------------------
+    all_matches: dict[int, dict] = {}      # match API id → raw dict
+    all_player_refs: dict[int, dict] = {}  # player API id → {id, name, countryAcr}
+    all_tournament_ids: set[int] = set()
+    error_count = 0
+    debug_dumped = False  # Print first match dict once for shape inspection
+
+    for idx, (player_id, player_name) in enumerate(players, 1):
+        try:
+            matches = fetch_player_matches(player_id, delay=1.5)
+
+            if not debug_dumped and matches:
+                print(f"  [debug] First match dict keys: {sorted(matches[0].keys())}")
+                print(f"  [debug] First match sample: {matches[0]!r}")
+                debug_dumped = True
+
+            new = 0
+            for m in matches:
+                mid = int(m["id"])
+                if mid not in all_matches:
+                    all_matches[mid] = m
+                    new += 1
+
+                # Collect every player reference for opponent resolution
+                for pkey in ("player1", "player2"):
+                    p = m.get(pkey, {})
+                    pid = p.get("id")
+                    if pid and pid not in all_player_refs:
+                        all_player_refs[pid] = p
+
+                # Collect tournament IDs
+                tid = m.get("tournamentId")
+                if tid:
+                    all_tournament_ids.add(tid)
+
+            print(f"[{idx}/{total_players}] ✓ {player_name} — {len(matches)} matches fetched, {new} new unique")
+        except Exception as e:
+            print(f"[{idx}/{total_players}] ✗ {player_name} — ERROR: {e}")
+            error_count += 1
+
+    print(f"\nAPI fetch complete. {len(all_matches)} unique matches collected, {error_count} errors.")
+
+    if not all_matches:
+        print("No matches to insert — done.")
+        return
+
+    # -- 3. Insert unknown opponents into the players table -------------------
+    # Gather IDs already in the DB
+    with engine.begin() as conn:
+        existing_ids = set(
+            r[0] for r in conn.execute(text("SELECT id FROM players")).fetchall()
+        )
+
+    new_players = []
+    seen_full_names: set[str] = set()
+    # Also collect existing full_names from the DB to avoid unique constraint violations
+    with engine.begin() as conn:
+        existing_names = set(
+            r[0].lower() for r in conn.execute(text("SELECT full_name FROM players")).fetchall()
+        )
+
+    for pid, pdata in all_player_refs.items():
+        if pid not in existing_ids:
+            name = pdata.get("name", "Unknown")
+            # Handle "Unknown Player" or blank names — make unique by appending player ID
+            if not name or name.strip().lower() in ("unknown", "unknown player", ""):
+                name = f"Unknown Player {pid}"
+            # Deduplicate by full_name (case-insensitive) across both DB and this batch
+            if name.lower() in existing_names or name.lower() in seen_full_names:
+                continue
+            seen_full_names.add(name.lower())
+            parts = name.split(" ", 1)
+            first_name = parts[0]
+            last_name = parts[1] if len(parts) > 1 else ""
+            new_players.append({
+                "id": pid,
+                "first_name": first_name,
+                "last_name": last_name,
+                "full_name": name,
+                "country": pdata.get("countryAcr"),
+            })
+
+    if new_players:
+        print(f"Inserting {len(new_players)} new opponent player(s)...")
+        insert_player_sql = text("""
+            INSERT INTO players (id, first_name, last_name, full_name, country)
+            VALUES (:id, :first_name, :last_name, :full_name, :country)
+            ON CONFLICT (id) DO NOTHING
+        """)
+        with engine.begin() as conn:
+            conn.execute(insert_player_sql, new_players)
+            # Advance the players sequence past the max explicit id
+            conn.execute(text("""
+                SELECT setval(
+                    'players_id_seq',
+                    GREATEST((SELECT MAX(id) FROM players), nextval('players_id_seq') - 1) + 1
+                )
+            """))
+        print("Opponent players inserted.")
+    else:
+        print("No new opponent players to insert.")
+
+    # -- 4. Insert tournament stubs -------------------------------------------
+    if all_tournament_ids:
+        print(f"Inserting {len(all_tournament_ids)} tournament stub(s)...")
+        insert_tournament_sql = text("""
+            INSERT INTO tournaments (id, name)
+            VALUES (:id, :name)
+            ON CONFLICT (id) DO NOTHING
+        """)
+        tournament_rows = [{"id": tid, "name": f"Tournament {tid}"} for tid in all_tournament_ids]
+        with engine.begin() as conn:
+            conn.execute(insert_tournament_sql, tournament_rows)
+            conn.execute(text("""
+                SELECT setval(
+                    'tournaments_id_seq',
+                    GREATEST((SELECT MAX(id) FROM tournaments), nextval('tournaments_id_seq') - 1) + 1
+                )
+            """))
+        print("Tournament stubs inserted.")
+
+    # -- 5. Bulk-insert matches (with surface) --------------------------------
+    print(f"Inserting/updating {len(all_matches)} match(es)...")
+
+    # Collect (player_id, match_id, period='match', stats) rows opportunistically
+    per_match_stat_rows: list[dict] = []
+    surface_seen = 0
+
+    match_rows = []
+    for mid, m in all_matches.items():
+        # Parse date
+        match_date = None
+        raw_date = m.get("date")
+        if raw_date:
+            try:
+                match_date = date_type.fromisoformat(raw_date[:10])
+            except (ValueError, TypeError):
+                pass
+
+        # Map roundId → round name
+        round_id = m.get("roundId")
+        round_name = ROUND_MAP.get(round_id)
+
+        surface = _extract_match_surface(m)
+        if surface:
+            surface_seen += 1
+
+        match_rows.append({
+            "id": mid,
+            "date": match_date,
+            "tournament_id": m.get("tournamentId"),
+            "round": round_name,
+            "surface": surface,
+            "player1_id": m["player1Id"],
+            "player2_id": m["player2Id"],
+            "winner_id": m.get("match_winner"),
+            "score": m.get("result"),
+        })
+
+        # Per-match stats (opportunistic) — for player1 and player2
+        p1_stats = _extract_per_match_stats(m, _PER_MATCH_STAT_KEYS_PLAYER1)
+        p2_stats = _extract_per_match_stats(m, _PER_MATCH_STAT_KEYS_PLAYER2)
+        if p1_stats:
+            per_match_stat_rows.append({
+                "player_id": m["player1Id"],
+                "match_id": mid,
+                "period": "match",
+                "surface": surface,
+                **{col: p1_stats.get(col) for col in _PER_MATCH_STAT_KEYS_PLAYER1.keys()},
+            })
+        if p2_stats:
+            per_match_stat_rows.append({
+                "player_id": m["player2Id"],
+                "match_id": mid,
+                "period": "match",
+                "surface": surface,
+                **{col: p2_stats.get(col) for col in _PER_MATCH_STAT_KEYS_PLAYER2.keys()},
+            })
+
+    print(f"  Surface populated for {surface_seen}/{len(match_rows)} matches.")
+
+    # UPSERT — keep new fields current on re-run (especially `surface`, which
+    # was previously dropped on insert).
+    insert_match_sql = text("""
+        INSERT INTO matches (id, date, tournament_id, round, surface,
+                             player1_id, player2_id, winner_id, score)
+        VALUES (:id, :date, :tournament_id, :round, :surface,
+                :player1_id, :player2_id, :winner_id, :score)
+        ON CONFLICT (id) DO UPDATE SET
+            surface = COALESCE(EXCLUDED.surface, matches.surface),
+            tournament_id = COALESCE(EXCLUDED.tournament_id, matches.tournament_id),
+            round = COALESCE(EXCLUDED.round, matches.round),
+            winner_id = COALESCE(EXCLUDED.winner_id, matches.winner_id),
+            date = COALESCE(EXCLUDED.date, matches.date),
+            score = COALESCE(EXCLUDED.score, matches.score)
+    """)
+
+    BATCH_SIZE = 500
+    inserted_total = 0
+    for i in range(0, len(match_rows), BATCH_SIZE):
+        batch = match_rows[i : i + BATCH_SIZE]
+        with engine.begin() as conn:
+            result = conn.execute(insert_match_sql, batch)
+            inserted_total += result.rowcount
+
+    # Advance the matches sequence
+    with engine.begin() as conn:
+        conn.execute(text("""
+            SELECT setval(
+                'matches_id_seq',
+                GREATEST((SELECT MAX(id) FROM matches), nextval('matches_id_seq') - 1) + 1
+            )
+        """))
+
+    # -- 6. Per-match player_stats rows (opportunistic) -----------------------
+    per_match_inserted = 0
+    if per_match_stat_rows:
+        print(f"Writing {len(per_match_stat_rows)} per-match player_stats row(s)...")
+        match_ids_to_clear = list({r["match_id"] for r in per_match_stat_rows})
+        # Clear any prior period='match' rows for these match_ids so re-runs
+        # are idempotent (no unique constraint to ON CONFLICT against).
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "DELETE FROM player_stats "
+                    "WHERE period = 'match' AND match_id = ANY(:mids)"
+                ),
+                {"mids": match_ids_to_clear},
+            )
+
+        # Filter out rows whose player_id is not in players (ON DELETE CASCADE
+        # foreign key would reject otherwise). All player1/player2 ids should
+        # be present after Phase 4 (opponent insertion above) but be safe.
+        with engine.begin() as conn:
+            existing_player_ids = {
+                r[0] for r in conn.execute(text("SELECT id FROM players")).fetchall()
+            }
+        clean_rows = [r for r in per_match_stat_rows if r["player_id"] in existing_player_ids]
+
+        insert_stats_sql = text("""
+            INSERT INTO player_stats (
+                player_id, match_id, period, surface,
+                aces, double_faults, first_serve_pct, first_serve_win_pct,
+                second_serve_win_pct, return_points_won_pct,
+                break_points_saved_pct, break_points_converted_pct,
+                service_games_won_pct, return_games_won_pct, tiebreaks_won_pct
+            ) VALUES (
+                :player_id, :match_id, :period, :surface,
+                :aces, :double_faults, :first_serve_pct, :first_serve_win_pct,
+                :second_serve_win_pct, :return_points_won_pct,
+                :break_points_saved_pct, :break_points_converted_pct,
+                :service_games_won_pct, :return_games_won_pct, :tiebreaks_won_pct
+            )
+        """)
+
+        # Ensure every row has all keys (defaulting to None) so the bind works
+        all_cols = list(_PER_MATCH_STAT_KEYS_PLAYER1.keys())
+        for r in clean_rows:
+            for c in all_cols:
+                r.setdefault(c, None)
+
+        with engine.begin() as conn:
+            for i in range(0, len(clean_rows), BATCH_SIZE):
+                batch = clean_rows[i : i + BATCH_SIZE]
+                result = conn.execute(insert_stats_sql, batch)
+                per_match_inserted += result.rowcount
+    else:
+        print("  No per-match stat fields found in API response — skipping.")
+        print("  (Career stats from Phase 4 ingester will still be available.)")
+
+    print(f"Inserted/updated {inserted_total} match row(s).")
+    print("\n" + "=" * 70)
+    print("Match seeding complete!")
+    print(f"  Unique matches collected:    {len(all_matches)}")
+    print(f"  Match rows upserted:         {inserted_total}")
+    print(f"  Surface populated on rows:   {surface_seen}")
+    print(f"  Per-match stat rows written: {per_match_inserted}")
+    print(f"  New opponent players:        {len(new_players)}")
+    print(f"  Tournament stubs:            {len(all_tournament_ids)}")
+    print(f"  Player fetch errors:         {error_count}")
+    print("=" * 70)
+
+
+def backfill_tournaments(only_ranked_meetings: bool = True) -> None:
+    """
+    Fetch full tournament metadata (name, surface, country, date, tier) from
+    the ATP API and propagate the resulting surface to each match referencing
+    that tournament.
+
+    By default (`only_ranked_meetings=True`), only fetches info for tournaments
+    that host at least one match between two currently-ranked players — the
+    set that matters for top-200 H2H analysis. Tournaments with surface
+    already populated are skipped (idempotent across runs).
+
+    Set `only_ranked_meetings=False` to backfill every tournament_id in the
+    tournaments table (slow: 5000+ tournaments at 1.5s each).
+
+    Workflow:
+      1. Pick tournament IDs to fetch (filtered + missing-surface only).
+      2. For each, call /tennis/v2/atp/tournament/info/{id}/.
+      3. UPDATE tournaments SET name, surface, location, start_date, category.
+      4. UPDATE matches SET surface = tournaments.surface WHERE
+         matches.tournament_id = tournaments.id AND matches.surface IS NULL.
+
+    Surface values come from the tournament's `court.name` (e.g. "Clay", "Hard").
+    """
+    from datetime import datetime
+
+    if only_ranked_meetings:
+        print("Picking tournaments hosting matches between two ranked players (missing surface)...")
+        sql = """
+            SELECT DISTINCT m.tournament_id
+            FROM matches m
+            JOIN players p1 ON p1.id = m.player1_id AND p1.current_ranking IS NOT NULL
+            JOIN players p2 ON p2.id = m.player2_id AND p2.current_ranking IS NOT NULL
+            JOIN tournaments t ON t.id = m.tournament_id
+            WHERE m.tournament_id IS NOT NULL
+              AND (t.surface IS NULL OR t.surface = '')
+            ORDER BY m.tournament_id
+        """
+    else:
+        print("Picking ALL tournaments missing surface...")
+        sql = """
+            SELECT id FROM tournaments
+            WHERE surface IS NULL OR surface = ''
+            ORDER BY id
+        """
+
+    with engine.begin() as conn:
+        rows = conn.execute(text(sql)).fetchall()
+    tids = [r[0] for r in rows]
+
+    total = len(tids)
+    if total == 0:
+        print("No tournaments in DB — run --matches first.")
+        return
+
+    print(f"Found {total} tournaments. Fetching info from API (1.5s delay)...\n")
+    updated = 0
+    error_count = 0
+
+    update_sql = text("""
+        UPDATE tournaments
+        SET name = COALESCE(:name, name),
+            surface = COALESCE(:surface, surface),
+            location = COALESCE(:location, location),
+            start_date = COALESCE(:start_date, start_date),
+            category = COALESCE(:category, category)
+        WHERE id = :id
+    """)
+
+    for idx, tid in enumerate(tids, 1):
+        try:
+            info = fetch_tournament_info(tid, delay=1.5)
+            if not info:
+                print(f"[{idx}/{total}] ✗ Tournament {tid} — no data")
+                error_count += 1
+                continue
+
+            # Surface from court.name
+            surface = None
+            court = info.get("court")
+            if isinstance(court, dict):
+                surface = court.get("name")
+            if not surface and isinstance(info.get("courtId"), int):
+                # If court name missing, leave null
+                surface = None
+
+            # Location from country.name (or "coutry" — yes the API has a typo)
+            location = None
+            country = info.get("country") or info.get("coutry")
+            if isinstance(country, dict):
+                location = country.get("name")
+
+            # Start date
+            start_date = None
+            raw_date = info.get("date") or info.get("startDate")
+            if raw_date:
+                try:
+                    start_date = datetime.fromisoformat(raw_date.replace("Z", "+00:00")).date()
+                except (ValueError, TypeError):
+                    pass
+
+            with engine.begin() as conn:
+                conn.execute(update_sql, {
+                    "id": tid,
+                    "name": info.get("name"),
+                    "surface": surface,
+                    "location": location,
+                    "start_date": start_date,
+                    "category": info.get("tier"),
+                })
+
+            print(f"[{idx}/{total}] ✓ Tournament {tid} — {info.get('name')!r} | surface={surface} | tier={info.get('tier')}")
+            updated += 1
+
+        except Exception as e:
+            print(f"[{idx}/{total}] ✗ Tournament {tid} — ERROR: {e}")
+            error_count += 1
+
+    # Propagate surface from tournaments → matches
+    print("\nPropagating surface from tournaments → matches...")
+    with engine.begin() as conn:
+        result = conn.execute(text("""
+            UPDATE matches
+            SET surface = tournaments.surface
+            FROM tournaments
+            WHERE matches.tournament_id = tournaments.id
+              AND tournaments.surface IS NOT NULL
+              AND (matches.surface IS NULL OR matches.surface = '')
+        """))
+        propagated = result.rowcount
+
+    # Also propagate to any per-match player_stats rows we already wrote
+    with engine.begin() as conn:
+        conn.execute(text("""
+            UPDATE player_stats AS ps
+            SET surface = m.surface
+            FROM matches m
+            WHERE ps.match_id = m.id
+              AND m.surface IS NOT NULL
+              AND (ps.surface IS NULL OR ps.surface = '')
+        """))
+
+    print("=" * 70)
+    print("Tournament backfill complete!")
+    print(f"  Tournaments updated: {updated}")
+    print(f"  Errors:              {error_count}")
+    print(f"  Match rows surfaced: {propagated}")
+    print("=" * 70)
+
+
+def fetch_and_populate_coach_data(only_ranked: bool = True) -> None:
     """
     Fetch player information from ATP API and populate database with all available data.
 
     Uses a 1.5-second delay between requests to respect API rate limits.
-    Updates: coach, height_cm, weight_kg, handedness, backhand_type, pro_since
+    Updates: coach, height_cm, weight_kg, handedness, backhand_type,
+             pro_since, birthdate
     Idempotent — safe to run multiple times.
+
+    Args:
+        only_ranked: If True (default), only process players with a non-null
+            `current_ranking` (i.e. the seeded/synced top-N). If False, process
+            every player in the table — includes thousands of historical
+            opponents and is expensive.
     """
     # First ensure the coach column exists (in case it's a fresh setup)
     print("Ensuring coach column exists...")
@@ -197,10 +864,14 @@ def fetch_and_populate_coach_data() -> None:
             ADD COLUMN IF NOT EXISTS coach VARCHAR(120);
         """))
 
-    # Fetch all players from database
-    print("Fetching all players from database...")
+    # Fetch players from database (filtered to ranked by default)
+    where_clause = "WHERE current_ranking IS NOT NULL" if only_ranked else ""
+    order_clause = "ORDER BY current_ranking" if only_ranked else "ORDER BY id"
+    print(f"Fetching players from database ({'ranked only' if only_ranked else 'all'})...")
     with engine.begin() as conn:
-        result = conn.execute(text("SELECT id, full_name FROM players ORDER BY id"))
+        result = conn.execute(
+            text(f"SELECT id, full_name FROM players {where_clause} {order_clause}")
+        )
         players = result.fetchall()
 
     total_players = len(players)
@@ -225,7 +896,8 @@ def fetch_and_populate_coach_data() -> None:
                         weight_kg = :weight_kg,
                         handedness = :handedness,
                         backhand_type = :backhand_type,
-                        pro_since = :pro_since
+                        pro_since = :pro_since,
+                        birthdate = COALESCE(:birthdate, birthdate)
                     WHERE id = :id
                 """)
                 result = conn.execute(update_sql, {
@@ -236,6 +908,7 @@ def fetch_and_populate_coach_data() -> None:
                     "handedness": player_data["handedness"],
                     "backhand_type": player_data["backhand_type"],
                     "pro_since": player_data["pro_since"],
+                    "birthdate": player_data.get("birthdate"),
                 })
 
             # Build status message with populated fields
@@ -252,6 +925,8 @@ def fetch_and_populate_coach_data() -> None:
                 status_parts.append(f"Backhand: {player_data['backhand_type']}")
             if player_data["pro_since"]:
                 status_parts.append(f"Pro Since: {player_data['pro_since']}")
+            if player_data.get("birthdate"):
+                status_parts.append(f"DOB: {player_data['birthdate']}")
 
             status = f"✓ {player_name}"
             if status_parts:
@@ -271,3 +946,33 @@ def fetch_and_populate_coach_data() -> None:
     print(f"  Total processed: {updated_count + error_count}/{total_players}")
     print("=" * 70)
 
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Tennis Scout DB bootstrap utilities")
+    parser.add_argument("--reset", action="store_true", help="Drop & recreate all tables")
+    parser.add_argument("--players", action="store_true", help="Seed players table from hardcoded list")
+    parser.add_argument("--sync-rankings", action="store_true", help="Sync top-200 rankings from API")
+    parser.add_argument("--coaches", action="store_true", help="Fetch & populate coach/profile data")
+    parser.add_argument("--matches", action="store_true", help="Fetch & populate matches")
+    parser.add_argument("--tournaments", action="store_true", help="Fetch tournament info & propagate surface to matches")
+    parser.add_argument("--top-n", type=int, default=200, help="Top-N rankings to sync (default 200)")
+    args = parser.parse_args()
+
+    # Default to --players if no flag is given
+    if not any([args.reset, args.players, args.sync_rankings, args.coaches, args.matches, args.tournaments]):
+        args.players = True
+
+    if args.reset:
+        reset_schema()
+    if args.players:
+        seed_players()
+    if args.sync_rankings:
+        sync_top200_rankings(top_n=args.top_n)
+    if args.coaches:
+        fetch_and_populate_coach_data()
+    if args.matches:
+        seed_matches()
+    if args.tournaments:
+        backfill_tournaments()
