@@ -28,14 +28,15 @@ export default function App() {
   const [viewMode, setViewMode] = useState('select') // 'select' | 'result'
 
   // ──── Scout handlers ────
-  const onSearch = async () => {
-    if (loading || !playerName.trim()) return
+  const onSearch = async (nameArg) => {
+    const name = (nameArg ?? playerName).trim()
+    if (loading || !name) return
 
     setLoading(true)
     setError('')
 
     try {
-      const response = await fetchPlayerReport(playerName)
+      const response = await fetchPlayerReport(name)
       setData(response)
     } catch (err) {
       setData(null)

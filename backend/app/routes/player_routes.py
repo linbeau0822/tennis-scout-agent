@@ -1,7 +1,11 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.services.data_service import compare_players_with_h2h, get_player_snapshot
+from app.services.data_service import (
+    compare_players_with_h2h,
+    get_player_snapshot,
+    search_players,
+)
 from app.services.llm_service import (
     build_compare_prompt,
     build_player_prompt,
@@ -13,6 +17,14 @@ router = APIRouter(tags=["players"])
 
 class CompareRequest(BaseModel):
     player_names: list[str] = Field(default_factory=list, min_length=2, validate_default=True, description="List of player names to compare (at least 2).")
+
+
+@router.get("/players/search")
+def search_player_names(
+    q: str = Query(..., min_length=1, max_length=100),
+    limit: int = Query(8, ge=1, le=20),
+) -> dict:
+    return {"results": search_players(q, limit)}
 
 
 @router.get("/player/{name}")

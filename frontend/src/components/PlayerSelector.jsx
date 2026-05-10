@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import PlayerAutocomplete from './PlayerAutocomplete'
 
 export default function PlayerSelector({ selectedPlayers, onAdd, onRemove, onCompare, isLoading }) {
   const [query, setQuery] = useState('')
@@ -24,16 +25,22 @@ export default function PlayerSelector({ selectedPlayers, onAdd, onRemove, onCom
           <label className="mb-1.5 block text-sm font-medium text-slate-400">
             Enter a player name to add ({selectedPlayers.length}/2)
           </label>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <input
-              className="w-full rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 outline-none ring-emerald-400 placeholder:text-slate-500 focus:ring"
-              placeholder="e.g. Jannik Sinner"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleAdd()
-              }}
-            />
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
+            <div className="w-full">
+              <PlayerAutocomplete
+                value={query}
+                onChange={setQuery}
+                onSelect={(player) => {
+                  if (isFull || isAlreadySelected(player.name)) return
+                  onAdd(player.name)
+                  setQuery('')
+                }}
+                onSubmit={handleAdd}
+                placeholder="e.g. Jannik Sinner"
+                accent="emerald"
+                excludeNames={selectedPlayers}
+              />
+            </div>
             <button
               className="rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
               onClick={handleAdd}
