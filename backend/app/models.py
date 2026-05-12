@@ -48,6 +48,7 @@ class Player(Base):
     pro_since: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     current_ranking: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     coach: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    image_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Relationships
     matches_as_p1: Mapped[list["Match"]] = relationship(

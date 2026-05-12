@@ -1,14 +1,19 @@
+import PlayerPhoto from './PlayerPhoto'
+
 export default function StatsTable({ snapshot }) {
   const { player, stats } = snapshot
 
   return (
     <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/60">
-      <div className="border-b border-slate-800 p-4">
-        <h2 className="text-xl font-semibold">{player.name}</h2>
-        <p className="text-sm text-slate-400">
-          {player.ranking ? `Rank #${player.ranking} • ` : ''}{player.country || 'N/A'}
-          {player.handedness ? ` • ${player.handedness}` : ''}
-        </p>
+      <div className="flex items-center gap-4 border-b border-slate-800 p-4">
+        <PlayerPhoto imageUrl={player.image_url} name={player.name} size="lg" accent="indigo" />
+        <div>
+          <h2 className="text-xl font-semibold">{player.name}</h2>
+          <p className="text-sm text-slate-400">
+            {player.ranking ? `Rank #${player.ranking} • ` : ''}{player.country || 'N/A'}
+            {player.handedness ? ` • ${player.handedness}` : ''}
+          </p>
+        </div>
       </div>
 
       <div className="grid gap-4 p-4 sm:grid-cols-2 lg:grid-cols-4">
