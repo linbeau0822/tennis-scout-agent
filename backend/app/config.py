@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o-mini"
     tennis_api_key: Optional[str] = None
     tennis_api_host: str = "tennis-api-atp-wta-itf.p.rapidapi.com"
+    redis_url: Optional[str] = None
+    llm_cache_enabled: bool = True
+    llm_cache_ttl_seconds: int = 86400
 
     model_config = SettingsConfigDict(
         env_file=".env",

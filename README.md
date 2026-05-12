@@ -46,6 +46,7 @@ FastAPI application, domain models, API routes, and service layer.
 	- ORM/data access (`sqlalchemy`, `psycopg`)
 	- config/env handling (`python-dotenv`, `pydantic-settings`)
 	- LLM client (`openai`)
+	- Cache client (`redis`) — optional; used by `cache_service` when `REDIS_URL` is set
 
 #### `backend/__init__.py`
 - Marks `backend` as a package so imports from root are reliable in scripts/tools.
@@ -182,6 +183,7 @@ From `frontend/`:
 2. Set values:
 	- `POSTGRES_URL=postgresql+psycopg://localhost:5432/tennis_scout`
 	- `OPENAI_API_KEY=...` (optional; if omitted the API returns fallback report text)
+	- `REDIS_URL=redis://localhost:6379/0` (optional; enables the LLM response cache — see section below)
 
 ## Database setup
 
@@ -211,3 +213,74 @@ Open `http://localhost:5173`.
 - `GET /player/{name}`
 - `POST /compare`
   - body: `{ "player_names": ["Carlos Alcaraz", "Jannik Sinner"] }`
+- `GET /players/search?q=<query>&limit=<n>`
+  - Autocomplete suggestions for the search inputs; case-insensitive substring match on `full_name`, ordered by `current_ranking`.
+
+## LLM response cache (optional)
+
+`generate_report()` calls OpenAI on every request by default. To cut latency and API spend on repeated lookups (e.g. popular players), the backend can cache LLM responses in Redis. The cache is optional — if `REDIS_URL` is unset or Redis is unreachable, the backend falls through to a direct OpenAI call.
+
+### Enable
+
+1. Install and start Redis:
+	- macOS: `brew install redis && redis-server --daemonize yes`
+	- Docker: `docker run -d -p 6379:6379 redis:7-alpine`
+2. Add to `.env`:
+	```
+	REDIS_URL=redis://localhost:6379/0
+	LLM_CACHE_ENABLED=true          # optional, default true
+	LLM_CACHE_TTL_SECONDS=86400     # optional, default 24h
+	```
+3. Restart the backend. Startup logs should show `Redis cache enabled at redis://localhost:6379/0.`
+
+### Verify it's working
+
+Every report response now includes a `cache` field in its `llm` metadata. Hit the same player twice:
+
+```bash
+curl -s http://localhost:8000/player/Carlos%20Alcaraz | jq '.llm'
+# First call:  "cache": "miss"  (took ~3s)
+curl -s http://localhost:8000/player/Carlos%20Alcaraz | jq '.llm'
+# Second call: "cache": "hit"   (~20ms)
+```
+
+Values:
+- `"hit"` — served from Redis
+- `"miss"` — cache enabled but key wasn't present; written after the LLM call (only on successful responses)
+- `"disabled"` — `REDIS_URL` unset or Redis unreachable; request still succeeds via direct OpenAI
+
+### Inspect what's in the cache
+
+Cache keys are namespaced `llm_report:{model}:{sha256(prompt)}`.
+
+```bash
+# Total keys in the DB
+redis-cli DBSIZE
+
+# List all cached LLM-report keys
+redis-cli --scan --pattern 'llm_report:*'
+
+# Time-to-live of a specific key (seconds remaining)
+redis-cli TTL 'llm_report:gpt-4o-mini:af3bfb518fd8a0...'
+
+# View the cached value (full ReportResult JSON)
+redis-cli GET 'llm_report:gpt-4o-mini:af3bfb518fd8a0...'
+
+# Live monitor of commands hitting Redis (useful when smoke-testing)
+redis-cli MONITOR
+```
+
+### Clear the cache
+
+```bash
+# Delete one entry
+redis-cli DEL 'llm_report:gpt-4o-mini:af3bfb518fd8a0...'
+
+# Delete all cached LLM reports (preserves any other keys)
+redis-cli --scan --pattern 'llm_report:*' | xargs -r redis-cli DEL
+
+# Nuke everything in the current Redis DB
+redis-cli FLUSHDB
+```
+
+Cache keys are **self-invalidating**: the prompt embeds ranking, recent form, and stats, so the SHA-256 changes whenever the underlying data changes — old entries are orphaned and age out via TTL. You should rarely need to flush manually.
