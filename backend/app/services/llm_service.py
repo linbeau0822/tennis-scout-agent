@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Literal, TypedDict
 
 from openai import OpenAI
 
 from app.config import get_settings
+from app.services.cache_service import cache_get_json, cache_set_json, cache_status
 
 settings = get_settings()
 
@@ -14,6 +16,7 @@ class LLMMetadata(TypedDict, total=False):
     source: Literal["openai", "fallback"]
     model: str
     error: str
+    cache: Literal["hit", "miss", "disabled"]
 
 
 class ReportResult(TypedDict):
@@ -151,7 +154,21 @@ def _format_h2h_for_prompt(snapshots: list[dict], h2h: dict | None) -> str:
     return "\n".join(parts) + "\n"
 
 
+def _cache_key(prompt: str) -> str:
+    digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    return f"llm_report:{settings.openai_model}:{digest}"
+
+
 def generate_report(prompt: str) -> ReportResult:
+    cache_enabled = cache_status() == "enabled"
+    key = _cache_key(prompt) if cache_enabled else None
+
+    if cache_enabled:
+        cached = cache_get_json(key)
+        if cached is not None:
+            cached.setdefault("llm", {})["cache"] = "hit"
+            return cached  # type: ignore[return-value]
+
     client = _client()
     if client is None:
         print("LLM client is unavailable. Returning fallback report.")
@@ -162,6 +179,7 @@ def generate_report(prompt: str) -> ReportResult:
                 "source": "fallback",
                 "model": settings.openai_model,
                 "error": "OPENAI_API_KEY is not configured",
+                "cache": "miss" if cache_enabled else "disabled",
             },
         }
 
@@ -183,18 +201,23 @@ def generate_report(prompt: str) -> ReportResult:
                     "source": "fallback",
                     "model": settings.openai_model,
                     "error": "Language model returned empty output",
+                    "cache": "miss" if cache_enabled else "disabled",
                 },
             }
 
         print("LLM response received with status ", response.status)  # Log the beginning of the response
-        return {
+        result: ReportResult = {
             "report": report,
             "llm": {
                 "status": "available",
                 "source": "openai",
                 "model": settings.openai_model,
+                "cache": "miss" if cache_enabled else "disabled",
             },
         }
+        if cache_enabled and key is not None:
+            cache_set_json(key, result, settings.llm_cache_ttl_seconds)
+        return result
     except Exception as e:
         print("Error during LLM request:", e)
         return {
@@ -204,5 +227,6 @@ def generate_report(prompt: str) -> ReportResult:
                 "source": "fallback",
                 "model": settings.openai_model,
                 "error": "Language model request failed",
+                "cache": "miss" if cache_enabled else "disabled",
             },
         }
