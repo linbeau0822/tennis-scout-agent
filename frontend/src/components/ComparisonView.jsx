@@ -242,7 +242,14 @@ function StatsComparison({ snapshots }) {
 
 /* ───────────── AI Analysis + Prediction ───────────── */
 
+const PREDICTION_HEADING = /^##\s+Prediction\b.*$/im
+
 function AnalysisSection({ report, llm, isUnavailable }) {
+  const match = !isUnavailable && report ? report.match(PREDICTION_HEADING) : null
+  const splitIdx = match ? match.index : -1
+  const mainContent = splitIdx >= 0 ? report.slice(0, splitIdx).trimEnd() : report
+  const predictionContent = splitIdx >= 0 ? report.slice(splitIdx).trim() : null
+
   return (
     <article className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
       <div className="flex items-center justify-between gap-3">
@@ -281,7 +288,35 @@ function AnalysisSection({ report, llm, isUnavailable }) {
               strong: ({ node, ...props }) => <strong className="font-semibold text-slate-100" {...props} />,
             }}
           >
-            {report}
+            {mainContent}
+          </ReactMarkdown>
+        </div>
+      )}
+
+      {!isUnavailable && predictionContent && (
+        <div
+          style={{ backgroundColor: '#F7E7CE' }}
+          className="prose mt-4 max-w-none rounded-xl border border-amber-200/40 p-5 text-sm leading-relaxed text-slate-900"
+        >
+          <ReactMarkdown
+            components={{
+              h2: ({ node, ...props }) => (
+                <h2 className="mb-3 mt-0 text-xl font-bold text-slate-900" {...props} />
+              ),
+              h3: ({ node, ...props }) => (
+                <h3 className="mb-2 mt-3 text-base font-semibold text-slate-900" {...props} />
+              ),
+              p: ({ node, ...props }) => <p className="mb-2 text-slate-800" {...props} />,
+              ul: ({ node, ...props }) => (
+                <ul className="mb-2 ml-4 list-disc text-slate-800" {...props} />
+              ),
+              li: ({ node, ...props }) => <li className="mb-1" {...props} />,
+              strong: ({ node, ...props }) => (
+                <strong className="font-semibold text-slate-900" {...props} />
+              ),
+            }}
+          >
+            {predictionContent}
           </ReactMarkdown>
         </div>
       )}
