@@ -153,6 +153,12 @@ React single-page app built with Vite and styled with Tailwind.
 	- Creates schema, clears previous seed rows, inserts sample players/matches.
 	- Enables immediate API testing without external data ingestion.
 
+- `daily_update.py`
+	- Daily cron script that polls the ATP API and upserts fresh data into PostgreSQL.
+	- Runs five steps in sequence: rankings → recent matches → tournament details → career stats → head-to-head recompute.
+	- All writes are idempotent (safe to run multiple times).
+	- See [Daily database update](#daily-database-update) for setup and configuration.
+
 
 ## Prerequisites
 
@@ -215,6 +221,71 @@ Open `http://localhost:5173`.
   - body: `{ "player_names": ["Carlos Alcaraz", "Jannik Sinner"] }`
 - `GET /players/search?q=<query>&limit=<n>`
   - Autocomplete suggestions for the search inputs; case-insensitive substring match on `full_name`, ordered by `current_ranking`.
+
+## Daily database update
+
+`data/daily_update.py` keeps the database current by polling the ATP API once per day. It runs five steps:
+
+| Step | What it updates | Source |
+|------|----------------|--------|
+| 1 | `players.current_ranking` | ATP rankings endpoint |
+| 2 | `matches`, `player_stats`, `tournaments` (stubs) | ATP past-matches endpoint (last N days) |
+| 3 | `tournaments` (name, surface, location) | ATP tournament info endpoint |
+| 4 | `player_stats` (career aggregates) | ATP career stats endpoint |
+| 5 | `head_to_head` win counts | Recomputed from matches in DB (no API call) |
+
+### Schedule (local cron)
+
+The script is designed to run as a local cron job. Install it with:
+
+```bash
+(crontab -l 2>/dev/null; echo "0 2 * * * /path/to/.venv/bin/python /path/to/data/daily_update.py >> /path/to/logs/daily_update.log 2>&1") | crontab -
+```
+
+Replace `/path/to` with your absolute project root. The default schedule is **2 AM daily** — change the first two fields to adjust:
+
+| Cron expression | Runs at |
+|----------------|---------|
+| `0 2 * * *` | 2 AM daily (default) |
+| `0 6 * * *` | 6 AM daily |
+| `0 */6 * * *` | Every 6 hours |
+| `0 2 * * 1` | 2 AM every Monday |
+
+To view or edit the current schedule: `crontab -e`
+
+Logs are appended to `logs/daily_update.log` in the project root.
+
+### Run manually
+
+```bash
+# Full run
+.venv/bin/python data/daily_update.py
+
+# Dry run (no DB writes)
+.venv/bin/python data/daily_update.py --dry-run --verbose
+
+# Fast run — skip the slow career stats step (~17 min for 200 players)
+.venv/bin/python data/daily_update.py --skip-stats --verbose
+
+# Fetch only the last 7 days of matches instead of the default 30
+.venv/bin/python data/daily_update.py --lookback-days 7
+```
+
+### Configuration flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--lookback-days N` | `30` | Fetch matches from last N days |
+| `--batch-size N` | `50` | Batch size for career stats ingestion |
+| `--skip-rankings` | off | Skip step 1 |
+| `--skip-matches` | off | Skip step 2 |
+| `--skip-tournaments` | off | Skip step 3 |
+| `--skip-stats` | off | Skip step 4 (slowest — ~17 min) |
+| `--skip-h2h` | off | Skip step 5 |
+| `--dry-run` | off | Fetch data but do not write to DB |
+| `--verbose` | off | Enable DEBUG-level logging |
+
+---
 
 ## LLM response cache (optional)
 
