@@ -1,4 +1,5 @@
 import ReactMarkdown from 'react-markdown'
+import PlayerPhoto from './PlayerPhoto'
 
 export default function ComparisonView({ data, onBack }) {
   if (!data) return null
@@ -21,12 +22,18 @@ export default function ComparisonView({ data, onBack }) {
 
       {/* Player Overview – side by side */}
       <div className="grid gap-4 md:grid-cols-2">
-        {players.map((player, idx) => (
+        {players.map((player) => (
           <div
             key={player.id}
-            className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 text-center"
+            className="flex flex-col items-center rounded-xl border border-slate-800 bg-slate-900/60 p-5 text-center"
           >
-            <h3 className="text-lg font-bold">{player.name}</h3>
+            <PlayerPhoto
+              imageUrl={player.image_url}
+              name={player.name}
+              size="lg"
+              accent="emerald"
+            />
+            <h3 className="mt-3 text-lg font-bold">{player.name}</h3>
             <p className="mt-1 text-sm text-slate-400">
               {player.ranking ? `Rank #${player.ranking} • ` : ''}{player.country || 'N/A'}
             </p>

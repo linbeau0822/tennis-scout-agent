@@ -178,6 +178,7 @@ def _build_snapshot(player: Player, matches: list[Match], session: Session) -> d
             "weight_kg": player.weight_kg,
             "pro_since": player.pro_since,
             "birthdate": player.birthdate.isoformat() if player.birthdate else None,
+            "image_url": player.image_url,
         },
         "stats": _summarize_matches(matches, player.id, per_match_stats),
     }
